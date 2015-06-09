@@ -25,6 +25,10 @@ typedef struct {
 typedef struct {
   gsl_spline *s;
   gsl_interp_accel *a;
+  VALUE rb_x;
+  VALUE rb_y;
+  gsl_vector *gsl_x;
+  gsl_vector *gsl_y;
 } rb_gsl_spline;
 
 enum {

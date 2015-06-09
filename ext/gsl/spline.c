@@ -15,6 +15,8 @@ EXTERN VALUE cgsl_interp_accel;  /* defined in interp.c */
 
 static void rb_gsl_spline_free(rb_gsl_spline *sp);
 
+static void rb_gsl_spline_mark(rb_gsl_spline *sp);
+
 static VALUE rb_gsl_spline_new(int argc, VALUE *argv, VALUE klass)
 {
   rb_gsl_spline *sp = NULL;
@@ -22,6 +24,9 @@ static VALUE rb_gsl_spline_new(int argc, VALUE *argv, VALUE klass)
   double *ptrx = NULL, *ptry = NULL;
   size_t sizex = 0, sizey = 0, size = 0, stride = 1;
   int i;
+  sp = ALLOC(rb_gsl_spline);
+  sp->gsl_x = NULL;
+  sp->gsl_y = NULL;
   for (i = 0; i < argc; i++) {
     switch (TYPE(argv[i])) {
     case T_STRING:
@@ -33,28 +38,37 @@ static VALUE rb_gsl_spline_new(int argc, VALUE *argv, VALUE klass)
       break;
     default:
       if (ptrx == NULL) {
-  ptrx = get_vector_ptr(argv[i], &stride, &sizex);
+        sp->rb_x = argv[i];
+        ptrx = get_vector_ptr(argv[i], &stride, &sizex);
       } else {
-  ptry = get_vector_ptr(argv[i], &stride, &sizey);
-  size = GSL_MIN_INT(sizex, sizey);
+        sp->rb_y = argv[i];
+        ptry = get_vector_ptr(argv[i], &stride, &sizey);
+        size = GSL_MIN_INT(sizex, sizey);
       }
       break;
     }
   }
   if (size == 0) rb_raise(rb_eRuntimeError, "spline size is not given.");
-  sp = ALLOC(rb_gsl_spline);
   if (T == NULL) T = gsl_interp_cspline;
   sp->s = gsl_spline_alloc(T, size);
   sp->a = gsl_interp_accel_alloc();
   if (ptrx && ptry) gsl_spline_init(sp->s, ptrx, ptry, size);
-  return Data_Wrap_Struct(klass, 0, rb_gsl_spline_free, sp);
+  return Data_Wrap_Struct(klass, rb_gsl_spline_mark, rb_gsl_spline_free, sp);
 }
 
 static void rb_gsl_spline_free(rb_gsl_spline *sp)
 {
   gsl_spline_free(sp->s);
   gsl_interp_accel_free(sp->a);
+  if (sp->gsl_x) gsl_vector_free(sp->gsl_x);
+  if (sp->gsl_y) gsl_vector_free(sp->gsl_y);
   free((rb_gsl_spline *) sp);
+}
+
+static void rb_gsl_spline_mark(rb_gsl_spline *sp)
+{
+  rb_gc_mark(sp->rb_x);
+  rb_gc_mark(sp->rb_y);
 }
 
 static VALUE rb_gsl_spline_init(VALUE obj, VALUE xxa, VALUE yya)
@@ -63,7 +77,6 @@ static VALUE rb_gsl_spline_init(VALUE obj, VALUE xxa, VALUE yya)
   gsl_spline *p = NULL;
   gsl_vector *xa = NULL, *ya = NULL;
   size_t i, size;
-  int flagx = 0, flagy = 0;
   double *ptr1 = NULL, *ptr2 = NULL;
 #ifdef HAVE_NARRAY_H
   struct NARRAY *nax = NULL, *nay = NULL;
@@ -76,15 +89,20 @@ static VALUE rb_gsl_spline_init(VALUE obj, VALUE xxa, VALUE yya)
     xa = gsl_vector_alloc(size);
     for (i = 0; i < size; i++) gsl_vector_set(xa, i, NUM2DBL(rb_ary_entry(xxa, i)));
     ptr1 = xa->data;
-    flagx = 1;
+    if (sp->gsl_x) gsl_vector_free(sp->gsl_x);
+    sp->gsl_x = xa;
   } else if (VECTOR_P(xxa)) {
     Data_Get_Struct(xxa, gsl_vector, xa);
     size = xa->size;
     ptr1 = xa->data;
+    if (sp->gsl_x) gsl_vector_free(sp->gsl_x);
+    sp->rb_x = xxa;
 #ifdef HAVE_NARRAY_H
   } else if (NA_IsNArray(xxa)) {
       GetNArray(xxa, nax);
       size = nax->total;
+      if (sp->gsl_x) gsl_vector_free(sp->gsl_x);
+      sp->rb_x = xxa;
       ptr1 = (double *) nax->ptr;
 #endif
   } else {
@@ -94,21 +112,24 @@ static VALUE rb_gsl_spline_init(VALUE obj, VALUE xxa, VALUE yya)
     ya = gsl_vector_alloc(size);
     for (i = 0; i < size; i++) gsl_vector_set(ya, i, NUM2DBL(rb_ary_entry(yya, i)));
     ptr2 = ya->data;
-    flagy = 1;
+    if (sp->gsl_y) gsl_vector_free(sp->gsl_y);
+    sp->gsl_y = ya;
 #ifdef HAVE_NARRAY_H
   } else if (NA_IsNArray(yya)) {
       GetNArray(yya, nay);
+      if (sp->gsl_y) gsl_vector_free(sp->gsl_y);
+      sp->rb_y = yya;
       ptr2 = (double *) nay->ptr;
 #endif
   } else if (VECTOR_P(yya)) {
     Data_Get_Struct(yya, gsl_vector, ya);
     ptr2 = ya->data;
+    if (sp->gsl_y) gsl_vector_free(sp->gsl_y);
+    sp->rb_y = yya;
   } else {
     rb_raise(rb_eTypeError, "not a vector");
   }
   gsl_spline_init(p, ptr1, ptr2, size);
-  if (flagx == 1) gsl_vector_free(xa);
-  if (flagy == 1) gsl_vector_free(ya);
   return obj;
 }
 
